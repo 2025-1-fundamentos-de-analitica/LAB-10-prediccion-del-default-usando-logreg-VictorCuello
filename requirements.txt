@@ -2,4 +2,8 @@ ipykernel
 pandas
 pytest
 scikit-learn==1.6.1
+<<<<<<< HEAD
 xlrd
+=======
+xlrd
+>>>>>>> 9109035e4ed89494135e1489237f0f143b54b876
