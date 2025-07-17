@@ -104,21 +104,21 @@ import gzip
 import pickle
 import json
 
-from sklearn.model_selection import GridSearchCV, KFold
+# CORRECCIÓN: Usar StratifiedKFold, es mejor para clasificación
+from sklearn.model_selection import GridSearchCV, StratifiedKFold 
 from sklearn.pipeline import Pipeline
 from sklearn.compose import ColumnTransformer
 from sklearn.preprocessing import OneHotEncoder, MinMaxScaler
 from sklearn.feature_selection import SelectKBest, f_classif
 from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import (
-    accuracy_score,
+    precision_score,  # CORRECCIÓN: Importar la métrica correcta
     balanced_accuracy_score,
     recall_score,
     f1_score,
     confusion_matrix,
 )
 
-# --- Configuración Inicial ---
 INPUT_DIR = "files/input/"
 OUTPUT_DIR = "files/output/"
 MODELS_DIR = "files/models/"
@@ -126,78 +126,47 @@ TRAIN_FILE = os.path.join(INPUT_DIR, "train_data.csv.zip")
 TEST_FILE = os.path.join(INPUT_DIR, "test_data.csv.zip")
 MODEL_FILE = os.path.join(MODELS_DIR, "model.pkl.gz")
 METRICS_FILE = os.path.join(OUTPUT_DIR, "metrics.json")
-
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 os.makedirs(MODELS_DIR, exist_ok=True)
 
-
 # --- Paso 1: Limpieza de los Datasets ---
 
-print("Paso 1: Realizando limpieza de los datasets...")
-
 def clean_data(df):
-    """
-    Función para limpiar el dataframe siguiendo la interpretación literal
-    de las instrucciones del ejercicio.
-    """
     df_cleaned = df.copy()
-    
-    # Renombrar la columna objetivo
     df_cleaned.rename(columns={"default payment next month": "default"}, inplace=True)
-    
-    # Remover la columna 'ID'
     if "ID" in df_cleaned.columns:
         df_cleaned.drop(columns=["ID"], inplace=True)
-        
-    # --- CAMBIO FINAL Y CORRECTO ---
-    # INSTRUCCIÓN 3: "Elimine los registros con informacion no disponible."
-    # El diccionario define EDUCATION=0 y MARRIAGE=0 como N/A.
-    # Se filtran estas filas para que el dataset coincida con el del calificador.
+    
+ 
     mask = (df_cleaned["EDUCATION"] != 0) & (df_cleaned["MARRIAGE"] != 0)
     df_cleaned = df_cleaned.loc[mask].copy()
     
-    # INSTRUCCIÓN 4: "Para la columna EDUCATION, valores > 4 ... agrupe estos valores en la categoría 'others' (4)."
-    # Esto significa mapear cualquier valor de EDUCATION como 5, 6, etc., a 4.
     df_cleaned.loc[df_cleaned["EDUCATION"] > 4, "EDUCATION"] = 4
-    
     return df_cleaned
 
-# Cargar y limpiar datos
 train_df = pd.read_csv(TRAIN_FILE)
 test_df = pd.read_csv(TEST_FILE)
-
 train_df_cleaned = clean_data(train_df.copy())
 test_df_cleaned = clean_data(test_df.copy())
 
-print(f"Datos de entrenamiento limpios: {train_df_cleaned.shape}")
-print(f"Datos de prueba limpios: {test_df_cleaned.shape}")
-
-
 # --- Paso 2: Dividir en x_train, y_train, x_test, y_test ---
-
-print("\nPaso 2: Dividiendo los datos en X e y...")
-
 target_column = "default"
 x_train = train_df_cleaned.drop(columns=[target_column])
 y_train = train_df_cleaned[target_column]
 x_test = test_df_cleaned.drop(columns=[target_column])
 y_test = test_df_cleaned[target_column]
 
-print(f"x_train shape: {x_train.shape}, y_train shape: {y_train.shape}")
-print(f"x_test shape: {x_test.shape}, y_test shape: {y_test.shape}")
-
-
 # --- Paso 3: Crear el Pipeline de Clasificación ---
 
-print("\nPaso 3: Creando el pipeline del modelo...")
 
-categorical_features = ["SEX", "EDUCATION", "MARRIAGE"] + [f"PAY_{i}" for i in [0, 2, 3, 4, 5, 6]]
+categorical_features = ["SEX", "EDUCATION", "MARRIAGE"]
 numerical_features = [col for col in x_train.columns if col not in categorical_features]
 
 preprocessor = ColumnTransformer(
     transformers=[
-        ("onehot", OneHotEncoder(handle_unknown="ignore", sparse_output=False), categorical_features),
+        
         ("scaler", MinMaxScaler(), numerical_features),
+        ("onehot", OneHotEncoder(handle_unknown="ignore", sparse_output=False), categorical_features),
     ]
 )
 
@@ -205,23 +174,23 @@ pipeline = Pipeline(
     steps=[
         ("preprocessor", preprocessor),
         ("feature_selection", SelectKBest(score_func=f_classif)),
-        ("classifier", LogisticRegression(random_state=42, max_iter=1000, solver='liblinear')),
+        ("classifier", LogisticRegression(random_state=42)), 
     ]
 )
-
-print("Pipeline creado exitosamente.")
 
 
 # --- Paso 4: Optimización de Hiperparámetros ---
 
-print("\nPaso 4: Optimizando hiperparámetros con GridSearchCV...")
 
 param_grid = {
-    "classifier__C": [0.01, 0.1, 1, 10, 100],
-    "feature_selection__k": [10, 15, 20, "all"],
+    'classifier__C': [0.7, 0.8, 0.9],
+    'classifier__solver': ['liblinear', 'saga'],
+    'classifier__max_iter': [1500],
+    'feature_selection__k': [1, 2, 5, 10]
 }
 
-cv = KFold(n_splits=10, shuffle=True, random_state=42)
+
+cv = StratifiedKFold(n_splits=10, shuffle=True, random_state=42)
 
 grid_search = GridSearchCV(
     estimator=pipeline,
@@ -233,37 +202,29 @@ grid_search = GridSearchCV(
 )
 
 grid_search.fit(x_train, y_train)
-
-print(f"\nMejores parámetros encontrados: {grid_search.best_params_}")
-print(f"Mejor puntuación (balanced_accuracy) en CV: {grid_search.best_score_:.4f}")
-
+best_model = grid_search.best_estimator_ 
 
 # --- Paso 5: Guardar el Modelo ---
-
-print("\nPaso 5: Guardando el modelo optimizado...")
-
 with gzip.open(MODEL_FILE, "wb") as f:
+    
     pickle.dump(grid_search, f)
 
-print(f"Modelo guardado en: {MODEL_FILE}")
 
-
-# --- Paso 6 y 7: Calcular y Guardar Métricas y Matrices de Confusión ---
-
-print("\nPaso 6 y 7: Calculando y guardando métricas y matrices de confusión...")
-
-y_train_pred = grid_search.predict(x_train)
-y_test_pred = grid_search.predict(x_test)
+# --- Paso 6 y 7: Calcular y Guardar Métricas ---
+y_train_pred = best_model.predict(x_train)
+y_test_pred = best_model.predict(x_test)
 
 def get_metrics_dict(y_true, y_pred, dataset_name):
+  
     return {
         "type": "metrics",
         "dataset": dataset_name,
-        "precision": accuracy_score(y_true, y_pred),
+        "precision": precision_score(y_true, y_pred), 
         "balanced_accuracy": balanced_accuracy_score(y_true, y_pred),
         "recall": recall_score(y_true, y_pred),
         "f1_score": f1_score(y_true, y_pred),
     }
+
 
 def get_cm_dict(y_true, y_pred, dataset_name):
     cm = confusion_matrix(y_true, y_pred)
@@ -275,20 +236,17 @@ def get_cm_dict(y_true, y_pred, dataset_name):
         "true_1": {"predicted_0": int(fn), "predicted_1": int(tp)},
     }
 
-train_metrics = get_metrics_dict(y_train, y_train_pred, "train")
-test_metrics = get_metrics_dict(y_test, y_test_pred, "test")
-train_cm = get_cm_dict(y_train, y_train_pred, "train")
-test_cm = get_cm_dict(y_test, y_test_pred, "test")
+
+metrics_list = [
+    get_metrics_dict(y_train, y_train_pred, "train"),
+    get_metrics_dict(y_test, y_test_pred, "test"),
+    get_cm_dict(y_train, y_train_pred, "train"),
+    get_cm_dict(y_test, y_test_pred, "test")
+]
 
 with open(METRICS_FILE, "w") as f:
-    json.dump(train_metrics, f)
-    f.write("\n")
-    json.dump(test_metrics, f)
-    f.write("\n")
-    json.dump(train_cm, f)
-    f.write("\n")
-    json.dump(test_cm, f)
-    f.write("\n")
+    for item in metrics_list:
+        json.dump(item, f)
+        f.write("\n")
 
-print(f"Métricas y matrices de confusión guardadas en: {METRICS_FILE}")
 print("\n¡Proceso completado exitosamente!")
